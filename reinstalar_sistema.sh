@@ -61,6 +61,7 @@ done
 echo "🐳 Subindo os containers com Docker Compose..."
 cd /home/edimar/SISTEMA
 docker compose up --build -d
+echo "🔌 Instalando broker e workers..."; bash /home/edimar/SCRIPTS/8.10_instalar_broker_e_workers.sh
 
 echo "⏳ Aguardando o serviço 'gestao_web' ficar totalmente operacional..."
 max_retries=20; count=0
