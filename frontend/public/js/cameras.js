@@ -1,0 +1,1363 @@
+const API = "/api";
+const toast = (m,ms=2200)=>{const t=document.getElementById("toast");t.textContent=m;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),ms);};
+
+let allCameras = [];
+let allClients = [];
+let currentPlaylist = [];
+let currentVideoIndex = 0;
+let recordingsData = null;
+let timelineOffset = 0;
+let timelineZoom = 1.0;
+let isDragging = false;
+let dragStartX = 0;
+let dragStartOffset = 0;
+let seekPending = false;
+let seekTimeout = null;
+let isCurrentlySeeking = false;  // Flag para evitar seeks simultâneos
+let debugLogs = [];
+let debugVisible = false;
+let video = null;  // Elemento de vídeo (inicializado após DOM carregar)
+let playerOverlay = null;  // Overlay de status do player
+let currentHls = null;  // Instância atual do HLS.js para destruir quando trocar
+
+function showPlayerOverlay(icon, text, hint) {
+  if (!playerOverlay) playerOverlay = document.getElementById('player-overlay');
+  if (!playerOverlay) return;
+
+  document.getElementById('player-overlay-icon').textContent = icon;
+  document.getElementById('player-overlay-text').textContent = text;
+  document.getElementById('player-overlay-hint').textContent = hint;
+  playerOverlay.style.display = 'flex';
+}
+
+function hidePlayerOverlay() {
+  if (!playerOverlay) playerOverlay = document.getElementById('player-overlay');
+  if (playerOverlay) {
+    playerOverlay.style.display = 'none';
+  }
+}
+
+function debugLog(message, type = 'info'){
+  const timestamp = new Date().toLocaleTimeString('pt-BR');
+  debugLogs.push({ time: timestamp, message, type });
+  if(debugLogs.length > 100) debugLogs.shift();
+
+  // Console também
+  if(type === 'error') console.error(message);
+  else if(type === 'warn') console.warn(message);
+  else console.log(message);
+
+  // Atualiza UI se visível
+  updateDebugPanel();
+}
+
+function toggleDebugPanel(){
+  debugVisible = !debugVisible;
+  const panel = document.getElementById('debug-panel');
+  if(panel){
+    panel.style.display = debugVisible ? 'flex' : 'none';
+  }
+}
+
+function updateDebugPanel(){
+  const content = document.getElementById('debug-content');
+  if(!content || !debugVisible) return;
+
+  content.innerHTML = debugLogs.map(log => {
+    const color = log.type === 'error' ? '#ef4444' : log.type === 'warn' ? '#f59e0b' : '#4ade80';
+    return `<div style="margin:2px 0; font-size:11px;"><span style="color:#666">[${log.time}]</span> <span style="color:${color}">${log.message}</span></div>`;
+  }).join('');
+
+  content.scrollTop = content.scrollHeight;
+}
+
+function copyDebugLogs(){
+  if(!debugLogs || debugLogs.length === 0){
+    alert('Nenhum log para copiar. Clique na timeline primeiro!');
+    return;
+  }
+
+  const logsText = debugLogs.map(log => `[${log.time}] ${log.message}`).join('\n');
+
+  // Cria textarea visível para debug
+  const textarea = document.createElement('textarea');
+  textarea.value = logsText;
+  textarea.style.position = 'fixed';
+  textarea.style.top = '50%';
+  textarea.style.left = '50%';
+  textarea.style.transform = 'translate(-50%, -50%)';
+  textarea.style.width = '80%';
+  textarea.style.height = '400px';
+  textarea.style.zIndex = '99999';
+  textarea.style.background = '#fff';
+  textarea.style.color = '#000';
+  textarea.style.padding = '10px';
+  textarea.style.border = '3px solid #4ade80';
+  textarea.style.fontSize = '12px';
+  textarea.style.fontFamily = 'monospace';
+
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    document.execCommand('copy');
+    alert(`✓ ${debugLogs.length} logs copiados!\n\nSelecione todo o texto (Ctrl+A) e copie novamente se necessário.`);
+
+    // Remove após 10 segundos
+    setTimeout(() => {
+      if(textarea.parentNode){
+        document.body.removeChild(textarea);
+      }
+    }, 10000);
+  } catch(e) {
+    alert('Erro ao copiar. Selecione o texto manualmente e copie (Ctrl+C)');
+  }
+}
+
+// Expõe funções no escopo global
+window.toggleDebugPanel = toggleDebugPanel;
+window.copyDebugLogs = copyDebugLogs;
+window.updateDebugPanel = updateDebugPanel;
+
+function createDebugPanel(){
+  if(document.getElementById('debug-panel')) return;
+
+  const panel = document.createElement('div');
+  panel.id = 'debug-panel';
+  panel.style.cssText = 'position:fixed; bottom:20px; right:20px; width:500px; height:400px; background:#0f172a; border:2px solid #4ade80; border-radius:8px; z-index:9999; display:none; flex-direction:column;';
+
+  panel.innerHTML = `
+    <div style="background:#1e293b; padding:8px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #4ade80;">
+      <strong style="color:#4ade80;">🐛 Debug Timeline</strong>
+      <div style="display:flex; gap:4px;">
+        <button onclick="copyDebugLogs();" style="padding:4px 8px; background:#3b82f6; border:1px solid #60a5fa; border-radius:4px; color:#fff; cursor:pointer; font-size:11px;" title="Copiar logs">📋 COPIAR</button>
+        <button onclick="debugLogs=[]; updateDebugPanel();" style="padding:4px 8px; background:#334155; border:1px solid #4ade80; border-radius:4px; color:#fff; cursor:pointer; font-size:11px;" title="Limpar logs">🗑️ LIMPAR</button>
+        <button onclick="toggleDebugPanel();" style="padding:4px 8px; background:#ef4444; border:1px solid #dc2626; border-radius:4px; color:#fff; cursor:pointer; font-size:11px;" title="Fechar painel">✕</button>
+      </div>
+    </div>
+    <div id="debug-content" style="flex:1; overflow-y:auto; padding:8px; font-family:monospace; color:#cbd5e1;"></div>
+  `;
+
+  document.body.appendChild(panel);
+}
+
+async function fetchJSON(path,opt={}){
+  const res = await fetch(API+path, {headers:{"Content-Type":"application/json"}, ...opt});
+  if(!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+async function loadClientsIntoSelect(){
+  const select = document.getElementById("cliente_id");
+  try {
+    allClients = await fetchJSON("/clients");
+    if (!allClients.length) {
+      select.innerHTML = `<option value="">Nenhum cliente cadastrado</option>`;
+      return;
+    }
+    select.innerHTML = allClients.map(c => `<option value="${c.id}" data-slug="${c.slug}">${c.nome}</option>`).join("");
+    suggestCameraName();
+  } catch (e) {
+    select.innerHTML = `<option value="">Falha ao carregar clientes</option>`;
+    toast("Erro ao carregar clientes: " + e.message);
+  }
+}
+
+async function loadCameras(){
+  const tbody = document.getElementById("tbody");
+  try{
+    const [cams, clients, statusData] = await Promise.all([
+      fetchJSON("/cameras"),
+      fetchJSON("/clients"),
+      fetchJSON("/status/cameras").catch(() => ({ cameras: [] }))
+    ]);
+    allCameras = cams;
+    const clientMap = new Map(clients.map(c => [c.id, c.nome]));
+
+    // Cria mapa de status (id -> objeto status completo)
+    const statusMap = new Map(
+      statusData.cameras.map(s => [s.id, { status: s.status, protocolo: s.protocolo }])
+    );
+
+    if(!cams.length){
+      tbody.innerHTML = `<tr><td colspan="7" class="empty">Nenhuma câmera.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = cams.map(c=>{
+      const statusInfo = statusMap.get(c.id) || { status: 'off', protocolo: '' };
+      const status = statusInfo.status;
+
+      let statusClass, statusText, statusTitle;
+      if (status === 'online') {
+        statusClass = 'online';
+        statusText = 'ON';
+        statusTitle = '🟢 ONLINE - Transmitindo ao vivo';
+      } else if (status === 'ready') {
+        statusClass = 'ready';
+        statusText = 'READY';
+        statusTitle = '🟡 READY - Aguardando stream (RTMP)';
+      } else {
+        statusClass = 'offline';
+        statusText = 'OFF';
+        statusTitle = '🔴 OFF - Sem transmissão';
+      }
+
+      const transcodeIcon = c.transcode_to_h265 ?
+        `<span style="font-size:11px; color:#4ade80; background:#1a1a1a; padding:2px 6px; border-radius:4px; border:1px solid #4ade80;" title="Transcodificação H.265 ativa - Economia ~50% de espaço">🔄 H.265</span>` : '';
+
+      return `
+      <tr data-ep="${c.endpoint}" data-id="${c.id}">
+        <td>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <strong>${c.nome}</strong>
+            <span class="status-led ${statusClass}" title="${statusTitle}">
+              <span class="status-led-dot"></span>
+              <span style="font-size:10px;">${statusText}</span>
+            </span>
+            ${transcodeIcon}
+          </div>
+        </td>
+        <td style="color:var(--muted);font-size:13px;">${clientMap.get(c.cliente_id) || c.cliente_id.substring(0,8)}</td>
+        <td style="font-size:12px;">${c.protocolo}</td>
+        <td style="font-size:12px;font-family:monospace;color:var(--muted);">${c.endpoint}</td>
+        <td>
+          <div style="display:flex;gap:4px;">
+            <button class="btn-icon" data-live="${c.id}" data-slug="${c.cliente_slug}" data-camera-name="${c.nome}" data-status="${status}" title="Assistir ao vivo">📡</button>
+            <button class="btn-icon" data-play-rec="${c.id}" data-camera-name="${c.nome}" title="Ver gravações">📹</button>
+            <button class="btn-icon ${c.transcode_to_h265 ? 'btn-icon-success' : ''}"
+                    data-toggle-h265="${c.id}"
+                    data-current-state="${c.transcode_to_h265}"
+                    title="${c.transcode_to_h265 ? '🔄 H.265 ATIVO - Clique para desativar' : '🔄 H.265 INATIVO - Clique para ativar'}">
+              🔄
+            </button>
+            <button class="btn-icon" data-copy="${c.endpoint}" title="Copiar endpoint">📋</button>
+            <button class="btn-icon btn-icon-danger" data-del="${c.id}" title="Remover câmera">🗑️</button>
+          </div>
+        </td>
+      </tr>
+      `;
+    }).join("");
+  }catch(e){
+    tbody.innerHTML = `<tr><td colspan="7" class="empty">Falha ao carregar: ${e.message}</td></tr>`;
+  }
+}
+
+function suggestCameraName(){
+  const clientId = document.getElementById("cliente_id").value;
+  if(!clientId) return;
+  const existingNames = allCameras.filter(c => c.cliente_id === clientId).map(c => c.nome.toLowerCase());
+  for(let i=1; i<=999; i++){
+    const candidate = `cam${i}`;
+    if(!existingNames.includes(candidate)){
+      document.getElementById("nome").value = candidate;
+      return;
+    }
+  }
+  document.getElementById("nome").value = "cam1";
+}
+
+function validateCameraName(name){
+  if(!name || name.length > 10) return false;
+  return /^[a-zA-Z0-9]+$/.test(name);
+}
+
+function generateRTMPEndpoint(){
+  const select = document.getElementById("cliente_id");
+  const selectedOption = select.options[select.selectedIndex];
+  const clientSlug = selectedOption?.dataset?.slug;
+  const cameraName = document.getElementById("nome").value.trim();
+  if(!clientSlug || !cameraName) return "";
+  return `rtmp://mediamtx:1935/live/${clientSlug}/${cameraName}`;
+}
+
+async function createCamera(){
+  const clientId = document.getElementById("cliente_id").value;
+  const nome = document.getElementById("nome").value.trim();
+  const protocolo = document.getElementById("protocolo").value.trim();
+  let endpoint = document.getElementById("endpoint").value.trim();
+  const transcodeToH265 = document.getElementById("transcode_to_h265").checked;
+
+  if(!clientId){ toast("Selecione um cliente."); return; }
+  if(!validateCameraName(nome)){ toast("Nome inválido. Use até 10 caracteres alfanuméricos."); return; }
+  if(protocolo === "RTMP" && !endpoint){
+    endpoint = generateRTMPEndpoint();
+    document.getElementById("endpoint").value = endpoint;
+  }
+  if(!endpoint){ toast("Informe o endpoint."); return; }
+
+  // Valida recursos se transcodificação estiver ativa
+  if(transcodeToH265){
+    try{
+      const res = await fetch(`${API}/hardware/can-transcode`);
+      const data = await res.json();
+      if(!data.can_start){
+        toast(`⚠️  Não é possível ativar transcodificação: ${data.message}`);
+        document.getElementById("resource-warning").style.display = "block";
+        document.getElementById("resource-warning-text").textContent = `⚠️ ${data.message}`;
+        return;
+      }
+    }catch(e){
+      console.error("Erro ao validar recursos:", e);
+      toast("⚠️  Erro ao validar recursos disponíveis");
+      return;
+    }
+  }
+
+  const payload = {
+    cliente_id: clientId,
+    nome: nome,
+    protocolo: protocolo,
+    endpoint: endpoint,
+    ativo: true,
+    transcode_to_h265: transcodeToH265
+  };
+
+  try{
+    await fetchJSON("/cameras", {method:"POST", body: JSON.stringify(payload)});
+    toast(transcodeToH265 ? "Câmera criada com transcodificação H.265!" : "Câmera criada!");
+    document.getElementById("nome").value="";
+    document.getElementById("endpoint").value="";
+    document.getElementById("transcode_to_h265").checked = false;
+    document.getElementById("resource-warning").style.display = "none";
+    await loadCameras();
+    suggestCameraName();
+  }catch(e){
+    toast("Erro: "+e.message);
+  }
+}
+
+async function copyEndpoint(endpoint){
+  try {
+    await navigator.clipboard.writeText(endpoint);
+    toast("Endpoint copiado!");
+  } catch(e) {
+    const textarea = document.createElement("textarea");
+    textarea.value = endpoint;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+    toast("Endpoint copiado!");
+  }
+}
+
+async function deleteCamera(cameraId){
+  if(!confirm("Remover esta câmera?")){ return; }
+  try{
+    const res = await fetch(`${API}/cameras/${cameraId}`, {method:"DELETE"});
+    if(res.status === 204){
+      toast("Câmera removida!");
+      await loadCameras();
+      suggestCameraName();
+    } else {
+      toast("Falha ao remover câmera.");
+    }
+  }catch(e){
+    toast("Erro: "+e.message);
+  }
+}
+
+async function playLive(cameraId, clientSlug, cameraName){
+  const playerTitle = document.getElementById("player-title");
+  const playerHint = document.getElementById("player-hint");
+  const timelineDiv = document.getElementById("recordings-timeline");
+  const infoDiv = document.getElementById("recordings-info");
+
+  // 🔧 LIMPEZA COMPLETA DO VÍDEO AO TROCAR DE CÂMERA
+
+  // Destrói instância HLS anterior se existir
+  if (currentHls) {
+    console.log("🧹 Destruindo instância HLS anterior...");
+    currentHls.destroy();
+    currentHls = null;
+  }
+
+  video.pause();
+  video.removeAttribute('src'); // Remove source anterior
+  video.load(); // Limpa buffer e volta para estado vazio
+  video.onloadeddata = null;
+  video.onseeked = null;
+  video.onerror = null;
+  video.oncanplay = null; // Remove listener de buffer
+  currentVideoIndex = -1; // Reseta índice para forçar reload
+
+  // Mostra overlay de carregamento
+  showPlayerOverlay('⏳', 'CARREGANDO...', 'Conectando à transmissão ao vivo');
+
+  // Oculta timeline e info (modo ao vivo)
+  timelineDiv.style.display = 'none';
+  infoDiv.style.display = 'none';
+  playerHint.style.display = 'block';
+  playerTitle.textContent = `Ao Vivo - ${cameraName} 📡`;
+
+  // Scroll para o player
+  video.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  const hlsUrl = `/hls/live/${clientSlug}/${cameraName}/index.m3u8`;
+
+  if (Hls.isSupported()) {
+    currentHls = new Hls({
+      enableWorker: true,
+      lowLatencyMode: true,
+      backBufferLength: 90,
+      maxBufferLength: 10,        // Buffer inicial de 10 segundos
+      maxMaxBufferLength: 20      // Máximo de 20 segundos
+    });
+
+    currentHls.loadSource(hlsUrl);
+    currentHls.attachMedia(video);
+
+    currentHls.on(Hls.Events.MANIFEST_PARSED, function() {
+      console.log("✓ HLS manifest carregado, iniciando playback...");
+      // Inicia reprodução mas MANTÉM overlay até ter buffer suficiente
+      video.play().catch(e => {
+        console.warn("Erro ao auto-play:", e);
+      });
+    });
+
+    // Aguarda ter buffer suficiente antes de esconder overlay
+    video.oncanplay = function() {
+      console.log("✓ Buffer suficiente, liberando player...");
+      // Delay adicional de 800ms para garantir buffer suave
+      setTimeout(() => {
+        hidePlayerOverlay();
+        toast("✓ Transmissão ao vivo iniciada");
+      }, 800);
+      video.oncanplay = null; // Remove listener após primeira execução
+    };
+
+    currentHls.on(Hls.Events.ERROR, function(event, data) {
+      console.error("❌ Erro HLS:", data);
+      if (data.fatal) {
+        switch(data.type) {
+          case Hls.ErrorTypes.NETWORK_ERROR:
+            console.error("Erro de rede - câmera offline ou inacessível");
+            showPlayerOverlay('📵', 'CÂMERA OFFLINE', 'Verifique se a câmera está conectada e transmitindo');
+            toast("❌ Câmera offline", 3000);
+            break;
+          case Hls.ErrorTypes.MEDIA_ERROR:
+            console.warn("Erro de mídia, tentando recuperar...");
+            // Tenta recuperar automaticamente sem mostrar overlay (evita poluição visual)
+            currentHls.recoverMediaError();
+            break;
+          default:
+            console.error("Erro fatal não recuperável");
+            showPlayerOverlay('❌', 'ERRO DE TRANSMISSÃO', data.details || 'Erro desconhecido');
+            toast("❌ Erro ao carregar transmissão", 3000);
+            break;
+        }
+      }
+    });
+
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = hlsUrl;
+
+    // Aguarda ter buffer suficiente antes de esconder overlay
+    video.oncanplay = function() {
+      console.log("✓ Buffer suficiente (Safari), liberando player...");
+      // Delay adicional de 800ms para garantir buffer suave
+      setTimeout(() => {
+        hidePlayerOverlay();
+        toast("✓ Transmissão ao vivo iniciada");
+      }, 800);
+      video.oncanplay = null; // Remove listener após primeira execução
+    };
+
+    video.addEventListener('error', () => {
+      showPlayerOverlay('📵', 'CÂMERA OFFLINE', 'Verifique se a câmera está conectada e transmitindo');
+      toast("❌ Câmera offline", 3000);
+    });
+
+    video.play().catch(e => {
+      console.warn("Erro ao auto-play:", e);
+    });
+  }
+}
+
+async function showRecordings(cameraId, cameraName){
+  console.log("🎬 showRecordings chamada!", { cameraId, cameraName });
+
+  const playerTitle = document.getElementById("player-title");
+  const playerHint = document.getElementById("player-hint");
+  const timelineDiv = document.getElementById("recordings-timeline");
+  const infoDiv = document.getElementById("recordings-info");
+
+  console.log("📍 Elementos encontrados:", { playerTitle, playerHint, timelineDiv, infoDiv });
+
+  // 🔧 LIMPEZA SUAVE DO VÍDEO AO TROCAR DE CÂMERA
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+  video.onloadeddata = null;
+  video.onseeked = null;
+  video.onerror = null;
+  currentVideoIndex = -1; // Reseta índice para forçar reload
+
+  hidePlayerOverlay(); // Garante que overlay está escondido ao entrar em modo gravações
+
+  playerTitle.textContent = `Gravações - ${cameraName}`;
+  playerHint.style.display = 'none';
+  timelineDiv.style.display = 'none';
+  infoDiv.style.display = 'block';
+  infoDiv.innerHTML = '<p style="color:#999">Carregando gravações...</p>';
+
+  console.log("📡 Fazendo scroll para player...");
+  // Scroll para o player
+  document.getElementById("player").scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  try {
+    console.log(`📡 Buscando gravações: /recordings/${cameraId}`);
+    recordingsData = await fetchJSON(`/recordings/${cameraId}`);
+    debugLog(`[API] Gravações recebidas: ${JSON.stringify(recordingsData)}`);
+
+    if(!recordingsData || !recordingsData.recordings || recordingsData.recordings.length === 0){
+      infoDiv.innerHTML = '<p style="color:#999">📹 Nenhuma gravação disponível para esta câmera.</p>';
+      showPlayerOverlay('📹', 'SEM GRAVAÇÕES', 'Esta câmera ainda não possui gravações');
+      return;
+    }
+
+    // Validação de datas
+    if(!recordingsData.start_date || !recordingsData.end_date){
+      throw new Error("Datas de início/fim ausentes na resposta da API");
+    }
+
+    // 🔥 FILTRA ARQUIVOS SENDO GRAVADOS (is_recording: true)
+    const completeRecordings = recordingsData.recordings.filter(r => !r.is_recording);
+    const inProgressCount = recordingsData.recordings.length - completeRecordings.length;
+
+    if(inProgressCount > 0){
+      debugLog(`⏺️ ${inProgressCount} arquivo(s) em gravação foram filtrados da timeline`, 'warning');
+    }
+
+    // Verifica se há arquivos completos disponíveis
+    if(completeRecordings.length === 0){
+      infoDiv.innerHTML = '<p style="color:#fbbf24">⏺️ Apenas gravações em andamento. Aguarde a finalização do primeiro segmento.</p>';
+      showPlayerOverlay('⏺️', 'GRAVAÇÃO EM ANDAMENTO', 'Aguarde a finalização do primeiro segmento (2 minutos)');
+      return;
+    }
+
+    currentPlaylist = completeRecordings.map(r => ({
+      filename: r.filename,
+      url: `${API}/recordings/stream/${cameraId}/${r.filename}`,
+      startTime: r.start_ts,
+      endTime: r.end_ts,
+      duration: r.duration_seconds
+    }));
+
+    // Recalcula datas e tamanho baseado apenas em arquivos completos
+    const startDate = new Date(completeRecordings[0].start_ts);
+    const endDate = new Date(completeRecordings[completeRecordings.length - 1].end_ts);
+    const totalSizeMB = (completeRecordings.reduce((sum, r) => sum + r.size, 0) / 1024 / 1024).toFixed(2);
+
+    // Verifica se as datas são válidas
+    if(isNaN(startDate.getTime()) || isNaN(endDate.getTime())){
+      throw new Error(`Datas inválidas: start=${recordingsData.start_date}, end=${recordingsData.end_date}`);
+    }
+
+    const startTimeStr = formatDateTimeBrasilia(startDate);
+    const endTimeStr = formatDateTimeBrasilia(endDate);
+
+    
+    const startTimestamp = startDate.getTime();
+    const endTimestamp = endDate.getTime();
+    const totalDuration = endTimestamp - startTimestamp;
+
+    // Posiciona timeline 1 minuto antes do momento atual (ou no fim se já passou)
+    const oneMinuteMs = 60 * 1000;
+    const initialTimestamp = Math.max(endTimestamp - oneMinuteMs, startTimestamp);
+    // Garante que não vá antes do início
+    
+    const initialProgress = ((initialTimestamp - startTimestamp) / totalDuration);
+    timelineOffset = -initialProgress;
+
+    // Timeline
+    timelineDiv.style.display = 'block';
+    timelineDiv.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button id="zoom-out" style="padding:4px 12px; background:#334155; border:1px solid var(--border); border-radius:4px; color:#fff; cursor:pointer; font-size:16px;" title="Reduzir zoom">🔍−</button>
+          <button id="zoom-in" style="padding:4px 12px; background:#334155; border:1px solid var(--border); border-radius:4px; color:#fff; cursor:pointer; font-size:16px;" title="Aumentar zoom">🔍+</button>
+          <span id="zoom-level" style="padding:4px 8px; color:#999; font-size:12px;">Zoom: 1.0x</span>
+          <div style="display:flex; gap:4px; margin-left:16px;">
+            <button id="nav-left" style="padding:4px 12px; background:#1e293b; border:1px solid var(--border); border-radius:4px; color:#fff; cursor:pointer; font-size:16px;" title="Voltar no tempo">◄</button>
+            <button id="nav-right" style="padding:4px 12px; background:#1e293b; border:1px solid var(--border); border-radius:4px; color:#fff; cursor:pointer; font-size:16px;" title="Avançar no tempo">►</button>
+            <button id="nav-now" style="padding:4px 12px; background:#1e293b; border:1px solid var(--border); border-radius:4px; color:#4ade80; cursor:pointer; font-size:11px;" title="Ir para agora">AGORA</button>
+          </div>
+        </div>
+        <button onclick="createDebugPanel(); toggleDebugPanel();" style="padding:4px 12px; background:#059669; border:1px solid #4ade80; border-radius:4px; color:#fff; cursor:pointer; font-size:12px; font-weight:bold;" title="Ver logs de debug">🐛 DEBUG</button>
+      </div>
+      <div style="position:relative;">
+        <div id="timeline-viewport" style="width:100%; height:48px; background:#0f172a; border-radius:8px; border:1px solid var(--border); position:relative; overflow:hidden; cursor:grab;">
+          <div id="timeline-track" style="height:100%; position:absolute; left:0; top:0; display:flex;">
+          </div>
+          <div id="timeline-pointer" style="position:absolute; left:50%; top:0; bottom:0; width:3px; background:#ef4444; transform:translateX(-50%); z-index:10; pointer-events:none;">
+            <div style="position:absolute; top:-8px; left:50%; transform:translateX(-50%); width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-top:8px solid #ef4444;"></div>
+          </div>
+        </div>
+        <div id="current-time-display" style="position:absolute; top:-24px; left:50%; transform:translateX(-50%); font-weight:bold; font-size:14px; color:#4ade80; background:#0f172a; padding:2px 8px; border-radius:4px; border:1px solid #4ade80;">--:--:--</div>
+      </div>
+      <div style="display:flex; justify-content:space-between; font-size:11px; color:#666; margin-top:4px;">
+        <span>${startTimeStr}</span>
+        <span>${endTimeStr}</span>
+      </div>
+    `;
+
+    // Info
+    const segmentInfo = inProgressCount > 0
+      ? `${completeRecordings.length} completos + <span style="color:#fbbf24">${inProgressCount} gravando</span>`
+      : completeRecordings.length;
+
+    infoDiv.innerHTML = `
+      <div style="background:#1e293b; padding:12px; border-radius:8px;">
+        <p style="margin:4px 0"><strong>📦 Tamanho Total:</strong> ${totalSizeMB} MB</p>
+        <p style="margin:4px 0"><strong>📅 Início:</strong> ${startTimeStr}</p>
+        <p style="margin:4px 0"><strong>📅 Fim:</strong> ${endTimeStr}</p>
+        <p style="margin:4px 0"><strong>📹 Segmentos:</strong> ${segmentInfo}</p>
+      </div>
+    `;
+
+    setupTimelineDrag();
+    renderTimelineMarkers();
+
+    // 🔧 CORREÇÃO: Aguarda 100ms para garantir que o player foi limpo antes de carregar vídeo
+    setTimeout(() => {
+      updateVideoFromTimeline();
+    }, 100);
+  } catch(e){
+    infoDiv.innerHTML = `<p style="color:#f44">Erro ao carregar gravações: ${e.message}</p>`;
+  }
+}
+
+function setupTimelineDrag(){
+  const viewport = document.getElementById("timeline-viewport");
+  if(!viewport) return;
+
+  // Botões de zoom
+  document.getElementById("zoom-in").onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    timelineZoom = Math.min(20.0, timelineZoom * 1.5);
+    updateZoomDisplay();
+    renderTimelineMarkers();
+    scheduleSeek();
+  };
+
+  document.getElementById("zoom-out").onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    timelineZoom = Math.max(1.0, timelineZoom / 1.5);
+    updateZoomDisplay();
+    renderTimelineMarkers();
+    scheduleSeek();
+  };
+
+  // Botões de navegação
+  document.getElementById("nav-left").onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const step = 0.1 / timelineZoom;
+    timelineOffset = Math.max(-1, timelineOffset + step);
+    updateTimeDisplay();
+    renderTimelineMarkers();
+    scheduleSeek();
+  };
+
+  document.getElementById("nav-right").onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const step = 0.1 / timelineZoom;
+    timelineOffset = Math.min(0, timelineOffset - step);
+    updateTimeDisplay();
+    renderTimelineMarkers();
+    scheduleSeek();
+  };
+
+  document.getElementById("nav-now").onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if(!recordingsData || !currentPlaylist.length) return;
+    const startTimestamp = currentPlaylist[0].startTime;
+    const endTimestamp = currentPlaylist[currentPlaylist.length - 1].endTime;
+    const totalDuration = endTimestamp - startTimestamp;
+    
+    const targetTimestamp = Math.min(now, endTimestamp);
+    const progress = (targetTimestamp - startTimestamp) / totalDuration;
+    timelineOffset = -progress;
+    updateTimeDisplay();
+    renderTimelineMarkers();
+    scheduleSeek();
+  };
+
+  // ========================================================================
+  // 🎯 CORREÇÃO: EVENTO DE CLIQUE DIRETO NA TIMELINE
+  // Permite que o usuário clique em qualquer ponto da timeline
+  // e o vídeo pule imediatamente para aquele segundo
+  // ========================================================================
+  viewport.onclick = (e) => {
+    if(!recordingsData) return;
+
+    // Previne que execute após um arrasto (se moveu mais de 5px, foi arrasto)
+    const moved = Math.abs(e.clientX - dragStartX);
+    if(moved > 5) {
+      debugLog(`[CLIQUE] Ignorado - foi arrasto (movimento: ${moved}px)`);
+      return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    debugLog(`[CLIQUE] ========== INÍCIO DO CLIQUE ==========`);
+
+    const rect = viewport.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const viewportWidth = viewport.offsetWidth;
+
+    const startTimestamp = new Date(recordingsData.start_date).getTime();
+    const endTimestamp = new Date(recordingsData.end_date).getTime();
+    const totalDuration = endTimestamp - startTimestamp;
+
+    debugLog(`[CLIQUE] Período: ${new Date(startTimestamp).toISOString()} até ${new Date(endTimestamp).toISOString()}`);
+    debugLog(`[CLIQUE] Duração total: ${(totalDuration/1000).toFixed(0)}s (${(totalDuration/60000).toFixed(1)}min)`);
+    debugLog(`[CLIQUE] Zoom atual: ${timelineZoom.toFixed(2)}x`);
+    debugLog(`[CLIQUE] Offset atual: ${timelineOffset.toFixed(4)}`);
+
+    // Largura total da track (considerando zoom)
+    const totalWidth = viewportWidth * timelineZoom;
+
+    // Posição atual da track
+    const track = document.getElementById("timeline-track");
+    const trackLeftStr = track.style.left || "0px";
+    const trackLeft = parseFloat(trackLeftStr);
+
+    debugLog(`[CLIQUE] Viewport width: ${viewportWidth}px`);
+    debugLog(`[CLIQUE] Total width (com zoom): ${totalWidth.toFixed(0)}px`);
+    debugLog(`[CLIQUE] Track.left atual: ${trackLeftStr} (${trackLeft.toFixed(2)}px)`);
+    debugLog(`[CLIQUE] Click X no viewport: ${clickX.toFixed(0)}px`);
+
+    // Qual posição da TRACK está sob o clique?
+    const trackPosition = clickX - trackLeft;
+    debugLog(`[CLIQUE] Posição na track: ${trackPosition.toFixed(0)}px`);
+
+    // Converte para proporção (0 = início, 1 = fim)
+    let clickProgress = trackPosition / totalWidth;
+
+    // 🛡️ PROTEÇÃO: Limita progress entre 0 e 1
+    if(clickProgress < 0) {
+      debugLog(`[CLIQUE] ⚠️ Progress negativo (${clickProgress.toFixed(4)}), ajustando para 0`, 'warn');
+      clickProgress = 0;
+    } else if(clickProgress > 1) {
+      debugLog(`[CLIQUE] ⚠️ Progress > 100% (${clickProgress.toFixed(4)}), ajustando para 1.0`, 'warn');
+      clickProgress = 1;
+    }
+
+    debugLog(`[CLIQUE] Progress calculado: ${clickProgress.toFixed(4)} (${(clickProgress*100).toFixed(2)}%)`);
+
+    // Qual timestamp está nessa proporção?
+    const clickedTimestamp = startTimestamp + (clickProgress * totalDuration);
+    const clickedDate = new Date(clickedTimestamp);
+    debugLog(`[CLIQUE] Timestamp clicado: ${clickedDate.toISOString()}`);
+
+    // Agora queremos que esse timestamp fique NO CENTRO do viewport
+    // Centro do viewport = offset que coloca esse ponto no meio
+
+    // Se a track está em trackLeft, e queremos que trackPosition fique no centro:
+    // clickX = centro = viewportWidth/2
+    // trackPosition = clickX - trackLeft
+    // Queremos: novo_trackLeft = clickX - trackPosition_que_queremos_no_centro
+    // trackPosition_que_queremos_no_centro = clickProgress * totalWidth
+    // Mas queremos que fique no centro, então:
+    // novo_trackLeft = (viewportWidth/2) - (clickProgress * totalWidth)
+
+    // Como trackLeft = timelineOffset * totalWidth:
+    // timelineOffset = novo_trackLeft / totalWidth
+
+    const desiredTrackLeft = (viewportWidth / 2) - (clickProgress * totalWidth);
+    const newOffset = desiredTrackLeft / totalWidth;
+
+    debugLog(`[CLIQUE] Desired trackLeft: ${desiredTrackLeft.toFixed(2)}px`);
+    debugLog(`[CLIQUE] Novo offset calculado: ${newOffset.toFixed(4)}`);
+
+    // Limita offset entre -1 e 0
+    timelineOffset = Math.max(-1, Math.min(0, newOffset));
+    debugLog(`[CLIQUE] Offset final (limitado): ${timelineOffset.toFixed(4)}`);
+
+    debugLog(`[CLIQUE] ========== FIM DO CLIQUE ==========`);
+
+    // Atualiza UI e faz seek
+    updateTimeDisplay();
+    renderTimelineMarkers();
+    scheduleSeek();
+  };
+  // ========================================================================
+
+  viewport.onmousedown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    isDragging = true;
+    dragStartX = e.clientX;
+    dragStartOffset = timelineOffset;
+    viewport.style.cursor = 'grabbing';
+  };
+
+  document.onmousemove = (e) => {
+    if(!isDragging) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const deltaX = e.clientX - dragStartX;
+    const viewportWidth = viewport.offsetWidth;
+    const deltaOffset = (deltaX / viewportWidth) / timelineZoom;
+    timelineOffset = dragStartOffset + deltaOffset;
+
+    // Limitar offset: permite scroll completo em qualquer zoom
+    timelineOffset = Math.max(-1, Math.min(0, timelineOffset));
+
+    // Durante arrasto: apenas atualiza display, não faz seek
+    updateTimeDisplay();
+  };
+
+  document.onmouseup = (e) => {
+    if(isDragging){
+      e.preventDefault();
+      e.stopPropagation();
+      isDragging = false;
+      viewport.style.cursor = 'grab';
+      // Quando soltar: faz seek no vídeo
+      scheduleSeek();
+    }
+  };
+
+  // Rodinha do mouse para ZOOM
+  viewport.onwheel = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if(e.deltaY < 0){
+      // Scroll up = zoom in
+      timelineZoom = Math.min(20.0, timelineZoom * 1.2);
+    } else {
+      // Scroll down = zoom out
+      timelineZoom = Math.max(1.0, timelineZoom / 1.2);
+    }
+
+    updateZoomDisplay();
+    renderTimelineMarkers();
+    scheduleSeek();
+  };
+}
+
+function updateZoomDisplay(){
+  const zoomText = timelineZoom.toFixed(1) + "x";
+  document.getElementById("zoom-level").textContent = "Zoom: " + zoomText;
+}
+
+function scheduleSeek(){
+  // Evita seeks simultâneos
+  if(isCurrentlySeeking){
+    debugLog('[SEEK] ⏸️ Seek já em andamento, ignorando nova solicitação', 'warn');
+    return;
+  }
+
+  // Debounce de 300ms
+  clearTimeout(seekTimeout);
+  seekTimeout = setTimeout(() => {
+    updateVideoFromTimeline();
+  }, 300);
+}
+
+function renderTimelineMarkers(){
+  if(!recordingsData) return;
+
+  const track = document.getElementById("timeline-track");
+  if(!track) return;
+
+  const viewport = document.getElementById("timeline-viewport");
+  const viewportWidth = viewport.offsetWidth;
+
+  const startTimestamp = currentPlaylist[0].startTime;
+  const endTimestamp = currentPlaylist[currentPlaylist.length - 1].endTime;
+  const totalDuration = endTimestamp - startTimestamp;
+
+  // Escolhe intervalo de marcação baseado no zoom
+  let intervalMinutes;
+  if(timelineZoom >= 15) intervalMinutes = 1;
+  else if(timelineZoom >= 10) intervalMinutes = 2;
+  else if(timelineZoom >= 5) intervalMinutes = 5;
+  else if(timelineZoom >= 3) intervalMinutes = 10;
+  else intervalMinutes = 15;
+
+  const intervalMs = intervalMinutes * 60 * 1000;
+
+  // Largura total da timeline (com zoom)
+  const totalWidth = viewportWidth * timelineZoom;
+  track.style.width = totalWidth + "px";
+
+  // Limpa marcações antigas
+  track.innerHTML = "";
+
+  // Arredonda para o intervalo mais próximo
+  const firstMark = Math.ceil(startTimestamp / intervalMs) * intervalMs;
+
+  // Desenha marcações
+  for(let t = firstMark; t <= endTimestamp; t += intervalMs){
+    const progress = (t - startTimestamp) / totalDuration;
+    const position = progress * totalWidth;
+
+    const marker = document.createElement("div");
+    marker.style.position = "absolute";
+    marker.style.left = position + "px";
+    marker.style.top = "0";
+    marker.style.bottom = "0";
+    marker.style.width = "1px";
+    marker.style.background = "#475569";
+    marker.style.zIndex = "1";
+
+    const label = document.createElement("div");
+    label.style.position = "absolute";
+    label.style.left = position + "px";
+    label.style.bottom = "2px";
+    label.style.transform = "translateX(-50%)";
+    label.style.fontSize = "10px";
+    label.style.color = "#cbd5e1";
+    label.style.whiteSpace = "nowrap";
+    label.style.zIndex = "2";
+    label.textContent = formatTimeOfDayBrasilia(new Date(t));
+
+    track.appendChild(marker);
+    track.appendChild(label);
+  }
+
+  // Posiciona track baseado no offset
+  track.style.left = (timelineOffset * totalWidth) + "px";
+}
+
+function updateTimeDisplay(){
+  if(!recordingsData || !currentPlaylist.length) return;
+
+  const startTimestamp = currentPlaylist[0].startTime;
+  const endTimestamp = currentPlaylist[currentPlaylist.length - 1].endTime;
+  const totalDuration = endTimestamp - startTimestamp;
+
+  const centerProgress = Math.abs(timelineOffset);
+  const centerTimestamp = startTimestamp + (centerProgress * totalDuration);
+
+  // Atualiza o display de tempo
+  document.getElementById("current-time-display").textContent = formatTimeOfDayBrasilia(new Date(centerTimestamp));
+
+  // Atualiza posição da timeline track
+  const track = document.getElementById("timeline-track");
+  const viewport = document.getElementById("timeline-viewport");
+  if(track && viewport){
+    const viewportWidth = viewport.offsetWidth;
+    const totalWidth = viewportWidth * timelineZoom;
+    track.style.left = (timelineOffset * totalWidth) + "px";
+  }
+}
+
+function updateVideoFromTimeline(){
+  if(!recordingsData || !currentPlaylist.length) return;
+
+  // Marca que está fazendo seek
+  isCurrentlySeeking = true;
+
+  // 🔥 CRÍTICO: Usa timestamps da PLAYLIST (arquivos completos), não do recordingsData original
+  const startTimestamp = currentPlaylist[0].startTime;
+  const endTimestamp = currentPlaylist[currentPlaylist.length - 1].endTime;
+  const totalDuration = endTimestamp - startTimestamp;
+
+  debugLog(`[SEEK] ========== INICIANDO SEEK ==========`);
+  debugLog(`[SEEK] Offset atual: ${timelineOffset.toFixed(4)}`);
+  debugLog(`[SEEK] Período: ${new Date(startTimestamp).toISOString()} até ${new Date(endTimestamp).toISOString()}`);
+  debugLog(`[SEEK] Duração total: ${(totalDuration/1000).toFixed(0)}s`);
+
+  // IMPORTANTE: centerProgress vai de 0 (início) até 1 (fim)
+  // Se timelineOffset = 0 → início (centerProgress = 0)
+  // Se timelineOffset = -1 → fim (centerProgress = 1)
+  const centerProgress = Math.abs(timelineOffset);
+  debugLog(`[SEEK] Center progress: ${centerProgress.toFixed(4)} (${(centerProgress*100).toFixed(2)}%)`);
+
+  const centerTimestamp = startTimestamp + (centerProgress * totalDuration);
+  const debugTime = new Date(centerTimestamp);
+  debugLog(`[SEEK] Timestamp central: ${debugTime.toISOString()}`);
+
+  // Atualiza display de tempo
+  updateTimeDisplay();
+
+  // Encontra qual segmento contém este timestamp
+  debugLog(`[SEEK] Procurando segmento... (total de ${currentPlaylist.length} segmentos)`);
+
+  // Lista todos os segmentos para debug
+  for(let i = 0; i < Math.min(3, currentPlaylist.length); i++){
+    const s = currentPlaylist[i];
+    debugLog(`[SEEK]   Segmento ${i}: ${s.filename} | ${new Date(s.startTime).toISOString()} → ${new Date(s.endTime).toISOString()}`);
+  }
+  if(currentPlaylist.length > 3){
+    debugLog(`[SEEK]   ... (mais ${currentPlaylist.length - 3} segmentos)`);
+  }
+
+  let foundSegment = false;
+  for(let i = 0; i < currentPlaylist.length; i++){
+    const segmentStart = currentPlaylist[i].startTime;
+    const segmentEnd = currentPlaylist[i].endTime;
+
+    // 🔧 CORREÇÃO: Último segmento deve aceitar timestamp igual ao end_ts
+    const isLastSegment = (i === currentPlaylist.length - 1);
+    const matchesSegment = isLastSegment
+      ? (centerTimestamp >= segmentStart && centerTimestamp <= segmentEnd)
+      : (centerTimestamp >= segmentStart && centerTimestamp < segmentEnd);
+
+    if(matchesSegment){
+      foundSegment = true;
+      const offsetMs = centerTimestamp - segmentStart;
+      let targetTime = offsetMs / 1000;
+
+      const segmentDuration = currentPlaylist[i].duration || 120;
+
+      debugLog(`[SEEK] ✓ Segmento encontrado: ${i} (${currentPlaylist[i].filename})`);
+      debugLog(`[SEEK]   Início: ${new Date(segmentStart).toISOString()}`);
+      debugLog(`[SEEK]   Fim: ${new Date(segmentEnd).toISOString()}`);
+      debugLog(`[SEEK]   Duração: ${segmentDuration.toFixed(2)}s`);
+      debugLog(`[SEEK]   Offset dentro do segmento: ${offsetMs}ms = ${targetTime.toFixed(2)}s`);
+
+      // 🛡️ PROTEÇÃO: Limita targetTime para não ultrapassar o fim do segmento
+      // Deixa margem de 0.5s antes do fim para evitar erros de seek
+      const maxTargetTime = Math.max(0, segmentDuration - 0.5);
+      if(targetTime > maxTargetTime){
+        debugLog(`[SEEK] ⚠️ Target time ${targetTime.toFixed(2)}s ajustado para ${maxTargetTime.toFixed(2)}s (margem de segurança)`, 'warn');
+        targetTime = maxTargetTime;
+      }
+
+      // Troca vídeo se mudou de segmento
+      if(currentVideoIndex !== i){
+        debugLog(`[TIMELINE] Trocando de segmento ${currentVideoIndex} → ${i}`, 'warn');
+        currentVideoIndex = i;
+
+        // Remove handlers antigos
+        video.onloadeddata = null;
+        video.onseeked = null;
+        video.onerror = null;
+
+        video.pause();
+        video.src = currentPlaylist[i].url;
+        video.load(); // Força reload
+
+        video.onloadeddata = () => {
+          debugLog(`[VIDEO] Loaded, readyState: ${video.readyState}`);
+          if(video.readyState >= 2){
+            const beforeSeek = video.currentTime;
+            debugLog(`[VIDEO] Posição antes do seek: ${beforeSeek.toFixed(2)}s`);
+            debugLog(`[VIDEO] Solicitando seek para ${targetTime.toFixed(2)}s...`);
+
+            // IMPORTANTE: PAUSA antes do seek
+            video.pause();
+            video.currentTime = targetTime;
+
+            // Timeout de segurança se onseeked não disparar
+            let seekTimeout = setTimeout(() => {
+              const diff = Math.abs(video.currentTime - targetTime);
+              if(diff < 2){
+                debugLog(`[VIDEO] ✓ Seek OK! Posição: ${video.currentTime.toFixed(2)}s (solicitado: ${targetTime.toFixed(2)}s, diff: ${diff.toFixed(2)}s)`);
+              } else {
+                debugLog(`[VIDEO] ⚠️ Seek impreciso! Posição: ${video.currentTime.toFixed(2)}s (solicitado: ${targetTime.toFixed(2)}s, diff: ${diff.toFixed(2)}s)`, 'warn');
+                debugLog(`[VIDEO] 💡 Isso indica keyframes muito espaçados no fMP4`, 'warn');
+              }
+              // Play DEPOIS do seek
+              video.play().catch(e => debugLog('[VIDEO] Erro play: ' + e, 'error'));
+            }, 300);
+
+            video.onseeked = () => {
+              clearTimeout(seekTimeout);
+              const finalPos = video.currentTime;
+              const diff = Math.abs(finalPos - targetTime);
+
+              if(diff < 2){
+                debugLog(`[VIDEO] ✓ Seek preciso! Posição: ${finalPos.toFixed(2)}s (solicitado: ${targetTime.toFixed(2)}s, diff: ${diff.toFixed(2)}s)`);
+              } else {
+                debugLog(`[VIDEO] ⚠️ Seek impreciso! Posição: ${finalPos.toFixed(2)}s (solicitado: ${targetTime.toFixed(2)}s, diff: ${diff.toFixed(2)}s)`, 'warn');
+                debugLog(`[VIDEO] 💡 Limitação: vídeo só busca em keyframes (a cada ${diff.toFixed(0)}s aprox)`, 'warn');
+              }
+
+              // Play SOMENTE depois do seek completar
+              video.play().catch(e => debugLog('[VIDEO] Erro play: ' + e, 'error'));
+            };
+          }
+        };
+
+        video.onerror = (e) => {
+          debugLog('[VIDEO] Erro ao carregar: ' + e, 'error');
+        };
+      } else {
+        // Mesmo segmento: faz seek direto
+        const currentTime = video.currentTime;
+        const diff = Math.abs(currentTime - targetTime);
+
+        if(diff > 0.5){
+          debugLog(`[VIDEO] Seek no mesmo segmento: ${currentTime.toFixed(2)}s → ${targetTime.toFixed(2)}s (diff: ${diff.toFixed(2)}s)`, 'warn');
+
+          const beforeSeek = video.currentTime;
+          video.currentTime = targetTime;
+
+          // Timeout de segurança
+          let seekTimeout = setTimeout(() => {
+            const seekDiff = Math.abs(video.currentTime - targetTime);
+            if(seekDiff < 2){
+              debugLog(`[VIDEO] ✓ Seek OK! Posição: ${video.currentTime.toFixed(2)}s (solicitado: ${targetTime.toFixed(2)}s, diff: ${seekDiff.toFixed(2)}s)`);
+            } else {
+              debugLog(`[VIDEO] ⚠️ Seek impreciso! Posição: ${video.currentTime.toFixed(2)}s (solicitado: ${targetTime.toFixed(2)}s, diff: ${seekDiff.toFixed(2)}s)`, 'warn');
+            }
+          }, 300);
+
+          video.onseeked = () => {
+            clearTimeout(seekTimeout);
+            const finalPos = video.currentTime;
+            const seekDiff = Math.abs(finalPos - targetTime);
+
+            if(seekDiff < 2){
+              debugLog(`[VIDEO] ✓ Seek preciso! Posição: ${finalPos.toFixed(2)}s (solicitado: ${targetTime.toFixed(2)}s, diff: ${seekDiff.toFixed(2)}s)`);
+            } else {
+              debugLog(`[VIDEO] ⚠️ Seek impreciso! Posição: ${finalPos.toFixed(2)}s (solicitado: ${targetTime.toFixed(2)}s, diff: ${seekDiff.toFixed(2)}s)`, 'warn');
+              debugLog(`[VIDEO] 💡 Keyframes espaçados: vídeo pula ~${seekDiff.toFixed(0)}s`, 'warn');
+            }
+          };
+
+          if(video.paused){
+            video.play().catch(e => debugLog('[VIDEO] Erro play: ' + e, 'error'));
+          }
+        } else {
+          debugLog(`[VIDEO] Diferença pequena (${diff.toFixed(2)}s), mantendo posição atual`);
+        }
+      }
+      break;
+    }
+  }
+
+  if(!foundSegment){
+    debugLog(`[TIMELINE] ❌ Nenhum segmento encontrado para timestamp ${debugTime.toISOString()}`, 'error');
+    debugLog(`[TIMELINE] Range disponível: ${new Date(startTimestamp).toISOString()} - ${new Date(endTimestamp).toISOString()}`, 'error');
+
+    // Mostra overlay informando ausência de vídeo neste horário
+    const timeStr = formatTimeOfDayBrasilia(debugTime);
+    showPlayerOverlay('⏰', 'SEM VÍDEO NESTE HORÁRIO', `Nenhuma gravação encontrada em ${timeStr}`);
+  }
+
+  // Libera flag após processamento (ou após um timeout)
+  setTimeout(() => {
+    isCurrentlySeeking = false;
+  }, 1000);
+}
+
+function formatTimeOfDayBrasilia(date){
+  if(!date) return "00:00:00";
+  return date.toLocaleTimeString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+}
+
+function formatDateTimeBrasilia(date){
+  if(!date || isNaN(date.getTime())) return "N/A";
+  return date.toLocaleString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+}
+
+document.getElementById("salvar").addEventListener("click", createCamera);
+document.getElementById("cliente_id").addEventListener("change", suggestCameraName);
+document.getElementById("protocolo").addEventListener("change", (e)=>{
+  if(e.target.value === "RTMP"){
+    const endpoint = generateRTMPEndpoint();
+    if(endpoint) document.getElementById("endpoint").value = endpoint;
+  }
+});
+document.getElementById("nome").addEventListener("input", ()=>{
+  if(document.getElementById("protocolo").value === "RTMP"){
+    const endpoint = generateRTMPEndpoint();
+    if(endpoint) document.getElementById("endpoint").value = endpoint;
+  }
+});
+document.getElementById("transcode_to_h265").addEventListener("change", async (e)=>{
+  const warning = document.getElementById("resource-warning");
+  const warningText = document.getElementById("resource-warning-text");
+
+  if(e.target.checked){
+    try{
+      const res = await fetch(`${API}/hardware/can-transcode`);
+      const data = await res.json();
+
+      if(!data.can_start){
+        warning.style.display = "block";
+        warningText.innerHTML = `⚠️ ${data.message}<br/><small>CPU: ${data.resources.cpu_percent.toFixed(1)}% | RAM: ${data.resources.memory_percent.toFixed(1)}%</small>`;
+        toast(`⚠️  ${data.message}`);
+      } else {
+        warning.style.display = "none";
+        toast("✓ Recursos disponíveis para transcodificação");
+      }
+    }catch(e){
+      console.error("Erro ao validar recursos:", e);
+      warning.style.display = "block";
+      warningText.textContent = "⚠️ Erro ao validar recursos";
+    }
+  } else {
+    warning.style.display = "none";
+  }
+});
+document.getElementById("tbody").addEventListener("click", async (ev)=>{
+  console.log("🖱️ Click detectado no tbody", ev.target);
+  console.log("📊 Datasets:", ev.target?.dataset);
+
+  const liveId = ev.target?.dataset?.live;
+  if(liveId){
+    console.log("📡 Botão LIVE clicado:", liveId);
+    const slug = ev.target?.dataset?.slug;
+    const cameraName = ev.target?.dataset?.cameraName || "Câmera";
+    const status = ev.target?.dataset?.status;
+
+    // Verifica se câmera está OFF antes de tentar carregar
+    if(status === 'offline' || status === 'off'){
+      console.log("⚠️ Câmera está OFF, mostrando overlay sem tentar carregar");
+
+      // Destrói instância HLS se existir
+      if (currentHls) {
+        console.log("🧹 Destruindo instância HLS (câmera OFF)...");
+        currentHls.destroy();
+        currentHls = null;
+      }
+
+      // Limpa player completamente
+      if(video){
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        video.onloadeddata = null;
+        video.onseeked = null;
+        video.onerror = null;
+        video.oncanplay = null;
+      }
+
+      // Atualiza UI
+      const playerTitle = document.getElementById("player-title");
+      const timelineDiv = document.getElementById("recordings-timeline");
+      const infoDiv = document.getElementById("recordings-info");
+      const playerHint = document.getElementById("player-hint");
+
+      playerTitle.textContent = `Ao Vivo - ${cameraName} 📡`;
+      timelineDiv.style.display = 'none';
+      infoDiv.style.display = 'none';
+      playerHint.style.display = 'block';
+
+      // Mostra overlay de câmera offline
+      showPlayerOverlay('📵', 'CÂMERA OFFLINE', 'Esta câmera não está transmitindo no momento');
+      toast("⚠️ Câmera offline", 3000);
+
+      // Scroll para o player
+      video.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+
+    await playLive(liveId, slug, cameraName);
+    return;
+  }
+  const playRecId = ev.target?.dataset?.playRec;
+  console.log("🔍 Verificando playRec:", playRecId);
+  if(playRecId){
+    console.log("📹 Botão GRAVAÇÕES clicado:", playRecId);
+    const cameraName = ev.target?.dataset?.cameraName || "Câmera";
+    await showRecordings(playRecId, cameraName);
+    return;
+  }
+  const copyEndpoint_val = ev.target?.dataset?.copy;
+  if(copyEndpoint_val){
+    await copyEndpoint(copyEndpoint_val);
+    return;
+  }
+  const toggleH265Id = ev.target?.dataset?.toggleH265;
+  if(toggleH265Id){
+    const currentState = ev.target?.dataset?.currentState === "true";
+    await toggleTranscoding(toggleH265Id, currentState);
+    return;
+  }
+  const deleteId = ev.target?.dataset?.del;
+  if(deleteId){
+    await deleteCamera(deleteId);
+    return;
+  }
+});
+
+async function toggleTranscoding(cameraId, currentState){
+  const newState = !currentState;
+  const action = newState ? "ativar" : "desativar";
+
+  // Se ativando, valida recursos primeiro
+  if(newState){
+    try{
+      const res = await fetch(`${API}/hardware/can-transcode`);
+      const data = await res.json();
+
+      if(!data.can_start){
+        toast(`⚠️ Não é possível ativar: ${data.message}`);
+        return;
+      }
+    }catch(e){
+      console.error("Erro ao validar recursos:", e);
+      toast("⚠️ Erro ao validar recursos");
+      return;
+    }
+  }
+
+  // Confirma ação
+  const confirmMsg = newState
+    ? "Ativar transcodificação H.265 para esta câmera?\n\n✓ Economia ~50% de espaço\n⚠️ Consome CPU/GPU"
+    : "Desativar transcodificação H.265 para esta câmera?";
+
+  if(!confirm(confirmMsg)) return;
+
+  try{
+    // Atualiza via API
+    const res = await fetch(`${API}/cameras/${cameraId}`, {
+      method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ transcode_to_h265: newState })
+    });
+
+    if(!res.ok){
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    toast(newState ? "✓ Transcodificação H.265 ativada!" : "✓ Transcodificação H.265 desativada!");
+
+    // Recarrega lista de câmeras
+    await loadCameras();
+
+  }catch(e){
+    toast(`Erro ao ${action} transcodificação: ${e.message}`);
+  }
+}
+
+async function initPage() {
+  // Inicializa elemento de vídeo
+  video = document.getElementById("player");
+  console.log("✓ Elemento de vídeo inicializado:", video);
+
+  await Promise.all([
+    loadClientsIntoSelect(),
+    loadCameras()
+  ]);
+  suggestCameraName();
+
+  // Auto-refresh de status a cada 10 segundos
+  setInterval(() => {
+    loadCameras();
+  }, 10000);
+}
+initPage();

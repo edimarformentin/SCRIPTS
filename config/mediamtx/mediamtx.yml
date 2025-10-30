@@ -1,0 +1,79 @@
+# MediaMTX configuration file
+# Arquivo gerado automaticamente
+
+# Server settings
+logLevel: info
+logDestinations: [stdout]
+logFile: /logs/mediamtx.log
+
+# API settings
+api: yes
+apiAddress: :9997
+
+# Auth settings (allow API access and streaming from any container/client)
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: api
+      - action: metrics
+      - action: pprof
+      - action: publish
+        path:
+      - action: read
+        path:
+
+# Metrics
+metrics: yes
+metricsAddress: :9998
+
+# HLS settings
+hls: yes
+hlsAddress: :8888
+hlsAlwaysRemux: no
+hlsVariant: mpegts
+hlsSegmentCount: 10
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+hlsSegmentMaxSize: 50M
+
+# RTSP settings
+rtspAddress: :8554
+
+# Recording settings (MediaMTX NÃO grava - FFmpeg é responsável)
+record: no
+recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S
+recordFormat: fmp4
+recordPartDuration: 1s
+recordSegmentDuration: 120s
+recordDeleteAfter: 48h
+
+# Global path defaults
+pathDefaults:
+  source: publisher
+  sourceOnDemand: no
+  record: no
+
+# Paths (câmeras RTSP configuradas abaixo)
+paths:
+  # Health check path
+  health:
+    source: publisher
+    sourceOnDemand: no
+    record: no
+
+
+  # Câmeras (sincronizadas automaticamente em Thu Oct 30 10:13:04 -03 2025)
+  live/edimar-demo01/cam1:
+    source: publisher
+    record: no
+  live/edimar-demo01/cam2:
+    source: publisher
+    record: no
+  live/edimar-demo01/cam3:
+    source: publisher
+    record: no
+  live/edimar-demo01/cam4:
+    source: publisher
+    record: no

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VaaS • Clientes</title>
+  <link rel="stylesheet" href="/css/modern.css" />
+</head>
+<body>
+<div class="app-container">
+  <!-- Header -->
+  <header class="header">
+    <a href="/index.html" class="header-brand">
+      <span class="header-brand-icon">📹</span>
+      <span>VaaS</span>
+    </a>
+    <div class="header-actions">
+      <button class="btn btn-primary" id="btn-novo-cliente">
+        + Novo Cliente
+      </button>
+    </div>
+  </header>
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <nav class="sidebar-nav">
+      <a href="/index.html" class="sidebar-nav-item active">
+        <span class="sidebar-nav-item-icon">👥</span>
+        <span>Clientes</span>
+      </a>
+      <a href="/admin.html" class="sidebar-nav-item">
+        <span class="sidebar-nav-item-icon">⚙️</span>
+        <span>Admin</span>
+      </a>
+    </nav>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main-content">
+    <div class="page-header">
+      <h1 class="page-title">Clientes</h1>
+      <p class="page-subtitle">Gerencie seus clientes e acesse suas câmeras</p>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-card-header">
+          <div class="stat-card-icon primary">
+            <span>👥</span>
+          </div>
+        </div>
+        <div class="stat-card-value" id="stat-total">0</div>
+        <div class="stat-card-label">Total de Clientes</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-card-header">
+          <div class="stat-card-icon success">
+            <span>✓</span>
+          </div>
+        </div>
+        <div class="stat-card-value" id="stat-ativos">0</div>
+        <div class="stat-card-label">Clientes Ativos</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-card-header">
+          <div class="stat-card-icon warning">
+            <span>📹</span>
+          </div>
+        </div>
+        <div class="stat-card-value" id="stat-cameras">0</div>
+        <div class="stat-card-label">Câmeras Totais</div>
+      </div>
+    </div>
+
+    <!-- Clientes Grid -->
+    <div class="grid grid-cols-3" id="clients-grid">
+      <!-- Cards serão inseridos aqui via JS -->
+      <div class="text-center" style="grid-column: 1 / -1; padding: 3rem;">
+        <p style="color: var(--text-secondary)">Carregando clientes...</p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Modal Novo/Editar Cliente -->
+<div id="modal-cliente" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 class="modal-title" id="modal-title">Novo Cliente</h2>
+      <button class="btn btn-icon btn-ghost" id="modal-close">×</button>
+    </div>
+    <div class="modal-body">
+      <form id="form-cliente">
+        <input type="hidden" id="cliente-id" />
+        <div class="form-group">
+          <label class="form-label">Nome *</label>
+          <input type="text" class="form-input" id="nome" required placeholder="Nome do cliente" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Documento (CPF/CNPJ) *</label>
+          <input type="text" class="form-input" id="documento" required placeholder="000.000.000-00" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Email</label>
+          <input type="email" class="form-input" id="email" placeholder="email@exemplo.com" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Telefone</label>
+          <input type="tel" class="form-input" id="telefone" placeholder="(00) 00000-0000" />
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="modal-cancel">Cancelar</button>
+      <button class="btn btn-primary" id="modal-salvar">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast hidden"></div>
+
+<script defer src="/js/app-modern.js"></script>
+</body>
+</html>

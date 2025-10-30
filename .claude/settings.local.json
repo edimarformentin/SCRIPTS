@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose:*)",
+      "Bash(sudo rm:*)",
+      "Bash(bash setup.sh:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker restart:*)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(chmod:*)",
+      "Bash(ls:*)",
+      "Bash(timeout 10 docker exec:*)",
+      "Read(//tmp/**)",
+      "Read(//proc/826563/**)",
+      "Bash(md5sum:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

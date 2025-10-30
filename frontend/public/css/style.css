@@ -1,0 +1,110 @@
+:root{
+  --bg:#0b1321; --panel:#111a2b; --muted:#7f8ca6; --text:#e6edf6; --accent:#34d399; --danger:#ef4444;
+  --border:#22304a; --link:#60a5fa; --link-hover:#93c5fd;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; font:16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+  color:var(--text); background:linear-gradient(180deg, #0b1321 0%, #0b1321 40%, #0d1830 100%) fixed;
+}
+a{color:var(--link); text-decoration:none}
+a:hover{color:var(--link-hover); text-decoration:underline}
+
+.container{max-width:1100px; margin:36px auto; padding:0 16px}
+.nav{display:flex; gap:14px; margin-bottom:22px}
+.nav a{padding:6px 10px; background:var(--panel); border:1px solid var(--border); border-radius:8px}
+h1{margin:0 0 18px; font-size:26px}
+.panel{
+  background:rgba(17,26,43,.85); backdrop-filter: blur(6px); border:1px solid var(--border);
+  border-radius:12px; padding:16px; margin:14px 0;
+  box-shadow: 0 10px 24px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.04);
+}
+.form-grid{display:grid; grid-template-columns: repeat(4, minmax(140px,1fr)); gap:10px}
+label{font-size:12px; color:var(--muted); display:block; margin-bottom:6px}
+input,select{
+  width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:#0f172a; color:var(--text);
+}
+button{
+  appearance:none; border:0; border-radius:10px; padding:10px 14px; cursor:pointer; font-weight:600;
+  background:linear-gradient(180deg, #22c55e, #16a34a); color:#052e16; box-shadow:0 8px 18px rgba(34,197,94,.25);
+  transition: all 0.2s ease;
+}
+button:hover{
+  transform: translateY(-1px);
+  box-shadow:0 10px 20px rgba(34,197,94,.3);
+}
+button.secondary{background:#0f172a; color:var(--text); border:1px solid var(--border)}
+button.secondary:hover{background:#1e293b; border-color:#3b4a63}
+button.danger{background:linear-gradient(180deg, #ef4444, #dc2626); color:#fff}
+button.danger:hover{background:linear-gradient(180deg, #dc2626, #b91c1c)}
+
+/* Botões apenas com ícone */
+.btn-icon{
+  padding:8px 10px; background:#1e293b; border:1px solid var(--border); border-radius:8px;
+  font-size:16px; min-width:36px; display:inline-flex; align-items:center; justify-content:center;
+  transition: all 0.2s ease;
+}
+.btn-icon:hover{
+  background:#2a3a52; border-color:#3b4a63; transform:translateY(-1px);
+  box-shadow:0 4px 8px rgba(0,0,0,.2);
+}
+.btn-icon-danger{
+  background:#3f1515; border-color:#5f2020;
+}
+.btn-icon-danger:hover{
+  background:#5f2020; border-color:#7f2828;
+}
+.btn-icon-success{
+  background:#15543f; border-color:#20805f;
+}
+.btn-icon-success:hover{
+  background:#20805f; border-color:#28a078;
+}
+
+.table{width:100%; border-collapse:collapse; margin-top:8px; font-size:14px}
+.table th,.table td{padding:12px 10px; border-bottom:1px solid var(--border); vertical-align:middle}
+.table th{color:var(--muted); text-align:left; font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:0.5px}
+.table tbody tr:hover{background:rgba(255,255,255,.02)}
+.empty{color:var(--muted); padding:8px 0}
+
+.toast{
+  position:fixed; top:14px; right:14px; background:#111827; border:1px solid #1f2937; color:#d1d5db;
+  padding:10px 12px; border-radius:10px; box-shadow:0 10px 24px rgba(0,0,0,.3); display:none
+}
+.show{display:block}
+
+/* Status LED */
+.status-led{
+  display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:600; padding:3px 8px;
+  border-radius:12px; background:rgba(0,0,0,.2); border:1px solid rgba(255,255,255,.05);
+}
+.status-led-dot{
+  width:8px; height:8px; border-radius:50%; position:relative;
+}
+.status-led.online .status-led-dot{
+  background:#22c55e;
+  box-shadow:0 0 6px rgba(34,197,94,.6), 0 0 12px rgba(34,197,94,.3);
+  animation:pulse-green 2s ease-in-out infinite;
+}
+.status-led.offline .status-led-dot{
+  background:#ef4444;
+  box-shadow:0 0 4px rgba(239,68,68,.4);
+}
+.status-led.ready .status-led-dot{
+  background:#f59e0b;
+  box-shadow:0 0 6px rgba(245,158,11,.5);
+  animation:pulse-yellow 2s ease-in-out infinite;
+}
+.status-led.checking .status-led-dot{
+  background:#f59e0b;
+  animation:pulse-yellow 1s ease-in-out infinite;
+}
+@keyframes pulse-green{
+  0%, 100%{opacity:1}
+  50%{opacity:0.7}
+}
+@keyframes pulse-yellow{
+  0%, 100%{opacity:1}
+  50%{opacity:0.5}
+}

@@ -1,0 +1,66 @@
+# Sistema operacional e Docker
+/etc/
+/dev/
+/bin/
+/lib/
+/lib64/
+/usr/
+/var/
+/tmp/
+/run/
+/sys/
+/proc/
+/host/
+.dockerenv
+/app/
+
+# Dados e Gravações
+data/recordings/**
+data/postgres/**
+*.mp4
+*.mkv
+*.avi
+
+# Backups
+backups/**
+*.tar.gz
+*.sql
+*.backup
+database_dump_*.sql
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+*.egg-info/
+
+# Configurações sensíveis
+.env.local
+*.pem
+*.key
+*.crt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Temporários
+.hardware_info.json
+*.tmp
+*.cache
+
+# Arquivos específicos do container
+config/mediamtx/mediamtx.yml.bak.*
