@@ -502,6 +502,11 @@ async def get_git_config():
         try:
             remote = repo.remote("origin")
             remote_url = list(remote.urls)[0] if remote.urls else ""
+
+            # Remover token da URL por segurança (não exibir no frontend)
+            if remote_url and '@' in remote_url:
+                # https://token@github.com/user/repo.git -> https://github.com/user/repo.git
+                remote_url = remote_url.split('://', 1)[0] + '://' + remote_url.split('@', 1)[1]
         except:
             pass
 
