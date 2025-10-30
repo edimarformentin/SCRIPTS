@@ -677,8 +677,15 @@ async function saveGitConfig() {
     // Se tem token e URL é HTTPS, inserir token na URL
     let finalRemoteUrl = remoteUrl;
     if (token && remoteUrl.startsWith('https://')) {
+      // Remover qualquer token anterior da URL
+      let cleanUrl = remoteUrl;
+      if (cleanUrl.includes('@')) {
+        // Se tem @, pegar só a parte depois do @
+        cleanUrl = 'https://' + cleanUrl.split('@').slice(1).join('@');
+      }
+
       // Extrair domínio e path: https://github.com/user/repo.git
-      const urlParts = remoteUrl.replace('https://', '').split('/');
+      const urlParts = cleanUrl.replace('https://', '').split('/');
       const domain = urlParts[0];
       const path = urlParts.slice(1).join('/');
       // Inserir token: https://token@github.com/user/repo.git
