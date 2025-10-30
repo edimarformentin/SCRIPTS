@@ -538,7 +538,8 @@ async def git_commit(request: GitCommitRequest):
         if request.push:
             try:
                 origin = repo.remote("origin")
-                push_info = origin.push()
+                # Usar set_upstream=True para configurar branch no primeiro push
+                push_info = origin.push(set_upstream=True)
                 result["pushed"] = True
                 result["push_info"] = str(push_info)
             except Exception as e:
@@ -560,7 +561,8 @@ async def git_push():
         repo = git.Repo(SISTEMA_DIR)
         origin = repo.remote("origin")
 
-        push_info = origin.push()
+        # Usar set_upstream=True para configurar branch no primeiro push
+        push_info = origin.push(set_upstream=True)
 
         return {
             "success": True,
