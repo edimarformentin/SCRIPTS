@@ -231,23 +231,18 @@
 
             <!-- Commit -->
             <div class="form-group mt-4">
-              <label class="form-label">Mensagem do Commit</label>
-              <textarea class="form-input" id="git-commit-message" rows="3" placeholder="feat: Nova funcionalidade"></textarea>
+              <label class="form-label">Descrição das Alterações</label>
+              <textarea class="form-input" id="git-commit-message" rows="3" placeholder="Ex: Corrigido bug na tela de câmeras"></textarea>
+              <small style="color: var(--text-secondary); font-size: 0.75rem;">
+                Descreva o que foi alterado nesta versão
+              </small>
             </div>
             <div style="display: flex; gap: 0.5rem;">
-              <button class="btn btn-success flex-1" id="btn-git-commit">
-                📝 Commit
+              <button class="btn btn-ghost flex-1" id="btn-git-commit" title="Salva alterações localmente (não envia ainda)">
+                💾 Salvar Alterações
               </button>
-              <button class="btn btn-success flex-1" id="btn-git-commit-push">
-                🚀 Commit + Push
-              </button>
-            </div>
-            <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-              <button class="btn btn-ghost flex-1" id="btn-git-push">
-                ⬆️ Push
-              </button>
-              <button class="btn btn-ghost flex-1" id="btn-git-pull">
-                ⬇️ Pull
+              <button class="btn btn-success flex-1" id="btn-git-commit-push" title="Salva e envia para o GitHub/GitLab">
+                🚀 Enviar pro Git
               </button>
             </div>
           </div>

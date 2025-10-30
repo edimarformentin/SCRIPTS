@@ -794,56 +794,8 @@ async function gitCommit(push = false) {
   }
 }
 
-async function gitPush() {
-  try {
-    showLoading(true);
-
-    const response = await fetch(`${API_BASE}/admin/git/push`, {
-      method: 'POST'
-    });
-
-    const data = await response.json();
-
-    if (response.ok) {
-      showToast('Push realizado com sucesso', 'success');
-      await loadGitStatus();
-    } else {
-      throw new Error(data.detail || 'Erro ao fazer push');
-    }
-
-  } catch (error) {
-    console.error('[Admin] Error pushing:', error);
-    showToast('Erro ao fazer push: ' + error.message, 'error');
-  } finally {
-    showLoading(false);
-  }
-}
-
-async function gitPull() {
-  try {
-    showLoading(true);
-
-    const response = await fetch(`${API_BASE}/admin/git/pull`, {
-      method: 'POST'
-    });
-
-    const data = await response.json();
-
-    if (response.ok) {
-      showToast('Pull realizado com sucesso', 'success');
-      await loadGitStatus();
-      await loadGitLog();
-    } else {
-      throw new Error(data.detail || 'Erro ao fazer pull');
-    }
-
-  } catch (error) {
-    console.error('[Admin] Error pulling:', error);
-    showToast('Erro ao fazer pull: ' + error.message, 'error');
-  } finally {
-    showLoading(false);
-  }
-}
+// Funções gitPush e gitPull removidas por segurança
+// Use "Enviar pro Git" (commit + push) ao invés de push solo
 
 async function loadGitLog() {
   try {
@@ -969,8 +921,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-save-git-config')?.addEventListener('click', saveGitConfig);
   document.getElementById('btn-git-commit')?.addEventListener('click', () => gitCommit(false));
   document.getElementById('btn-git-commit-push')?.addEventListener('click', () => gitCommit(true));
-  document.getElementById('btn-git-push')?.addEventListener('click', gitPush);
-  document.getElementById('btn-git-pull')?.addEventListener('click', gitPull);
 
   // Logs
   document.getElementById('btn-load-logs')?.addEventListener('click', loadLogs);
