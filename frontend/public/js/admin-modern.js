@@ -753,7 +753,7 @@ async function gitCommit(push = false) {
   const message = document.getElementById('git-commit-message').value.trim();
 
   if (!message) {
-    showToast('Digite uma mensagem de commit', 'error');
+    showToast('Digite uma descrição das alterações', 'error');
     return;
   }
 
@@ -772,10 +772,12 @@ async function gitCommit(push = false) {
     const data = await response.json();
 
     if (response.ok) {
-      let msg = `Commit criado: ${data.commit_sha}`;
-      if (push) {
-        msg += data.pushed ? ' e enviado!' : ' (push falhou)';
+      let msg = push ? '✅ Alterações enviadas pro Git com sucesso!' : '💾 Alterações salvas localmente';
+
+      if (push && data.push_error) {
+        msg = '⚠️ Alterações salvas, mas erro ao enviar: ' + data.push_error;
       }
+
       showToast(msg, 'success');
 
       document.getElementById('git-commit-message').value = '';
@@ -783,12 +785,12 @@ async function gitCommit(push = false) {
       await loadGitStatus();
       await loadGitLog();
     } else {
-      throw new Error(data.detail || 'Erro ao fazer commit');
+      throw new Error(data.detail || 'Erro ao salvar alterações');
     }
 
   } catch (error) {
     console.error('[Admin] Error committing:', error);
-    showToast('Erro ao fazer commit: ' + error.message, 'error');
+    showToast('Erro: ' + error.message, 'error');
   } finally {
     showLoading(false);
   }
