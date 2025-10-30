@@ -671,10 +671,24 @@ async function loadGitConfig() {
 
 async function saveGitConfig() {
   try {
+    const remoteUrl = document.getElementById('git-remote-url').value.trim();
+    const token = document.getElementById('git-token').value.trim();
+
+    // Se tem token e URL é HTTPS, inserir token na URL
+    let finalRemoteUrl = remoteUrl;
+    if (token && remoteUrl.startsWith('https://')) {
+      // Extrair domínio e path: https://github.com/user/repo.git
+      const urlParts = remoteUrl.replace('https://', '').split('/');
+      const domain = urlParts[0];
+      const path = urlParts.slice(1).join('/');
+      // Inserir token: https://token@github.com/user/repo.git
+      finalRemoteUrl = `https://${token}@${domain}/${path}`;
+    }
+
     const config = {
       user_name: document.getElementById('git-user-name').value,
       user_email: document.getElementById('git-user-email').value,
-      remote_url: document.getElementById('git-remote-url').value
+      remote_url: finalRemoteUrl
     };
 
     const response = await fetch(`${API_BASE}/admin/git/config`, {
@@ -686,8 +700,11 @@ async function saveGitConfig() {
     const data = await response.json();
 
     if (response.ok) {
-      showToast('Configuração Git salva', 'success');
+      showToast('✅ Configuração Git salva com sucesso!', 'success');
       await loadGitStatus();
+
+      // Limpar campo de token por segurança
+      document.getElementById('git-token').value = '';
     } else {
       throw new Error(data.detail || 'Erro ao salvar configuração');
     }
